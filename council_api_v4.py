@@ -85,9 +85,9 @@ async def consult_advisor(page, advisor_name, question):
         await page.wait_for_load_state("networkidle", timeout=30000)
         
         selectors = [
-            'textarea[name="query"]',
+            'textarea.active',
             'textarea.search-input',
-            'textarea[placeholder*="Ask anything"]',
+            'textarea[name="query"]',
             'textarea[placeholder*="Ask"]',
             'input[type="text"]'
         ]
