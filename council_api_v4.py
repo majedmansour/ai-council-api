@@ -137,12 +137,15 @@ async def consult_advisor(page, advisor_name, question):
         await page.wait_for_load_state("networkidle", timeout=30000)
         
         # Try to submit question
-        selectors = [
-            'textarea[placeholder*="Ask"]',
-            'textarea[placeholder*="Type"]',
-            'input[type="text"]',
-            '[contenteditable="true"]'
-        ]
+selectors = [
+    'textarea[name="query"]',
+    'textarea.search-input',
+    'textarea[placeholder*="Ask anything"]',
+    'textarea[placeholder*="Ask"]',
+    'textarea[placeholder*="Type"]',
+    'input[type="text"]',
+    '[contenteditable="true"]'
+]
         
         submitted = False
         for selector in selectors:
