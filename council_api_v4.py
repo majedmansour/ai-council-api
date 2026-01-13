@@ -77,7 +77,7 @@ async def consult_advisor(page, advisor_name, question):
     print(f"📞 Consulting {agent_name}...")
     
     try:
-        await page.goto(agent_url, timeout=60000, wait_until="networkidle")
+        await page.goto(agent_url, timeout=180000, wait_until="networkidle")
         
         # Wait extra time for page to fully render
         await asyncio.sleep(5)
@@ -182,7 +182,7 @@ async def run_council_session(session_id, question, context, selected_advisors):
         synthesis_prompt += "Synthesize into a unified recommendation."
         
         try:
-            await synthesis_page.goto(ALL_AGENTS["Synthesiser"]["url"], timeout=60000, wait_until="networkidle")
+            await synthesis_page.goto(ALL_AGENTS["Synthesiser"]["url"], timeout=180000, wait_until="networkidle")
             await asyncio.sleep(5)
             
             selectors = ['textarea.active', 'textarea.search-input', 'textarea[name="query"]', 'textarea']
