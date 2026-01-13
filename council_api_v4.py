@@ -5,7 +5,6 @@ from playwright.async_api import async_playwright
 import time
 from pathlib import Path
 from docx import Document
-from docx.shared import Pt
 import threading
 
 app = Flask(__name__)
@@ -41,9 +40,6 @@ ALL_AGENTS = {
 COUNCIL_PRESETS = {
     "full": ["Analyst", "Strategist", "DevilsAdvocate", "Creative", "FinancialAnalyst"],
     "core": ["Analyst", "Strategist", "DevilsAdvocate", "Creative"],
-    "strategic": ["Strategist", "DevilsAdvocate", "FinancialAnalyst"],
-    "financial": ["Analyst", "FinancialAnalyst", "DevilsAdvocate"],
-    "creative": ["Creative", "Strategist", "DevilsAdvocate"],
     "quick": ["Analyst", "Strategist"]
 }
 
@@ -81,36 +77,58 @@ async def consult_advisor(page, advisor_name, question):
     print(f"📞 Consulting {agent_name}...")
     
     try:
-        await page.goto(agent_url, timeout=30000)
-        await page.wait_for_load_state("networkidle", timeout=30000)
+        await page.goto(agent_url, timeout=60000, wait_until="networkidle")
         
+        # Wait extra time for page to fully render
+        await asyncio.sleep(5)
+        
+        # Try multiple selectors with retries
         selectors = [
             'textarea.active',
             'textarea.search-input',
             'textarea[name="query"]',
             'textarea[placeholder*="Ask"]',
+            'textarea',
             'input[type="text"]'
         ]
         
-        submitted = False
-        for selector in selectors:
-            try:
-                input_field = await page.wait_for_selector(selector, timeout=5000)
-                if input_field:
-                    await input_field.click()
-                    await input_field.fill(question)
-                    await page.keyboard.press("Enter")
-                    submitted = True
-                    print(f"✅ Submitted to {agent_name}")
-                    break
-            except:
-                continue
+        input_field = None
+        for attempt in range(3):
+            for selector in selectors:
+                try:
+                    input_field = await page.wait_for_selector(selector, timeout=10000, state="visible")
+                    if input_field:
+                        # Verify it's actually interactable
+                        is_visible = await input_field.is_visible()
+                        is_enabled = await input_field.is_enabled()
+                        if is_visible and is_enabled:
+                            print(f"✅ Found input field with selector: {selector}")
+                            break
+                        else:
+                            input_field = None
+                except:
+                    continue
+            
+            if input_field:
+                break
+            
+            print(f"⏳ Retry {attempt + 1}/3 - waiting for input field...")
+            await asyncio.sleep(3)
         
-        if not submitted:
-            print(f"⚠️ Could not auto-submit to {agent_name}")
+        if not input_field:
+            print(f"❌ Could not find input field for {agent_name}")
             return f"[Could not submit to {agent_name}]"
         
+        # Submit question
+        await input_field.click()
+        await asyncio.sleep(1)
+        await input_field.fill(question)
+        await asyncio.sleep(1)
+        await page.keyboard.press("Enter")
+        
+        print(f"✅ Submitted to {agent_name}")
         print(f"⏳ Waiting for {agent_name} response (180s)...")
+        
         await asyncio.sleep(180)
         
         body_text = await page.evaluate("document.body.innerText")
@@ -133,10 +151,13 @@ async def run_council_session(session_id, question, context, selected_advisors):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=['--no-sandbox', '--disable-dev-shm-usage']
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
         )
         
-        context_obj = await browser.new_context()
+        context_obj = await browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        )
         
         active_sessions[session_id]["progress"] = "Consulting advisors..."
         
@@ -158,30 +179,31 @@ async def run_council_session(session_id, question, context, selected_advisors):
         synthesis_prompt = f"Question: {question}\n\n"
         for advisor, response in advisor_responses.items():
             synthesis_prompt += f"{ALL_AGENTS[advisor]['name']}: {response}\n\n"
-        synthesis_prompt += "Synthesize these perspectives into a unified recommendation."
+        synthesis_prompt += "Synthesize into a unified recommendation."
         
         try:
-            await synthesis_page.goto(ALL_AGENTS["Synthesiser"]["url"], timeout=30000)
-            await synthesis_page.wait_for_load_state("networkidle", timeout=30000)
+            await synthesis_page.goto(ALL_AGENTS["Synthesiser"]["url"], timeout=60000, wait_until="networkidle")
+            await asyncio.sleep(5)
             
-            selectors = [
-                'textarea[name="query"]',
-                'textarea.search-input',
-                'textarea[placeholder*="Ask anything"]'
-            ]
+            selectors = ['textarea.active', 'textarea.search-input', 'textarea[name="query"]', 'textarea']
             
+            synth_input = None
             for selector in selectors:
                 try:
-                    input_field = await synthesis_page.wait_for_selector(selector, timeout=5000)
-                    if input_field:
-                        await input_field.click()
-                        await input_field.fill(synthesis_prompt)
-                        await synthesis_page.keyboard.press("Enter")
+                    synth_input = await synthesis_page.wait_for_selector(selector, timeout=10000, state="visible")
+                    if synth_input and await synth_input.is_visible():
                         break
                 except:
                     continue
             
-            await asyncio.sleep(180)
+            if synth_input:
+                await synth_input.click()
+                await asyncio.sleep(1)
+                await synth_input.fill(synthesis_prompt)
+                await asyncio.sleep(1)
+                await synthesis_page.keyboard.press("Enter")
+                await asyncio.sleep(180)
+            
             body_text = await synthesis_page.evaluate("document.body.innerText")
             lines = [line.strip() for line in body_text.split('\n') if len(line.strip()) > 50]
             synthesis = '\n'.join(lines[-30:])
@@ -192,8 +214,6 @@ async def run_council_session(session_id, question, context, selected_advisors):
         active_sessions[session_id]["synthesis"] = synthesis
         
         await browser.close()
-        
-        active_sessions[session_id]["progress"] = "Generating documents..."
         
         full_doc = create_word_document(session_id, question, advisor_responses, synthesis, "full")
         exec_doc = create_word_document(session_id, question, advisor_responses, synthesis, "executive")
